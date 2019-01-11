@@ -1,0 +1,604 @@
+#NEW WORKFLOW SCRIPT#
+#Major changes include: -different 'target file'
+						-find reverse compliment w/ 
+      
+						-???
+						
+						
+#start with /old_trim
+ #-files were orginally trimmed with trimmomatic to remove adapters, etc, 
+ 
+#Run Hyb-piper on translated target file
+
+
+
+#Run Hyb-piper on non-translated target file
+
+#write following script
+#ensure target sequences are in the proper folder
+#don't combine unparied into all
+	#these are 'junk/leftover' files which is why they fail the sequence
+
+nano basic_hyb...sh
+
+while read name 
+do /home/bioinformatics/Ottenlips_phylogenetics/software/HybPiper/reads_first.py -b Angiosperms353_targetSequences.fasta -r "$name"_R*Tpaired.fastq --prefix $name --bwa
+done <namelist.txt
+
+bash basichybyb...sh
+
+
+
+#get stats back#
+
+#heatmap
+  #/bwa
+python ~/Ottenlips_phylogenetics/software/HybPiper/get_seq_lengths.py Angiosperms353_targetSequences.fasta namelist.txt dna > HeatMapBWA353.txt
+  
+  #/blast
+python ~/Ottenlips_phylogenetics/software/HybPiper/get_seq_lengths.py Angiosperms353_targetSequences_TRANSLATED.fasta namelist.txt aa > HeatMapBLAST353.txt
+
+#need to visulize in R
+
+#out_stats
+
+#BWA
+python ~/Ottenlips_phylogenetics/software/HybPiper/hybpiper_stats.py HeatMapBWA353.txt namelist.txt > BWA353_stats.txt
+
+#/blast
+python ~/Ottenlips_phylogenetics/software/HybPiper/hybpiper_stats.py HeatMapBLAST353.txt namelist.txt > BLAST353_stats.txt
+
+#I should generate these figures and tables for my thesis/appendices and also pick which one I will contintue with. 
+
+#I found the most helpful metric was to sort by genes at 75% completion
+#BLAST 353 has more genes mapped at 75% then any other file. including BWA and both old target files
+
+
+#start extrating the exons, introns, etc. and checking for paralogs for BLAST files
+
+#exons
+
+python ~/Ottenlips_phylogenetics/software/HybPiper/retrieve_sequences.py Angiosperms353_targetSequences_TRANSLATED.fasta . dna
+mv *.FNA ../../exons/
+
+#introns
+nano introns.sh
+
+while read name
+do python ~/Ottenlips_phylogenetics/software/HybPiper/intronerate.py --prefix $name
+done < namelist.txt
+
+bash introns.sh
+
+python ~/Ottenlips_phylogenetics/software/HybPiper/retrieve_sequences.py Angiosperms353_targetSequences_TRANSLATED.fasta . intron
+
+mv *.fasta ../../introns/
+
+#check for paralogs before preeceeding to alignment/phylogentic analysis.
+
+nano paralogs.sh
+
+while read i
+do
+echo $i
+python ~/Ottenlips_phylogenetics/software/HybPiper/paralog_investigator.py $i
+done < namelist.txt
+
+bash paralogs.sh
+
+#saved (copy and pasted from terminal) output to NGS stats folder as paralogs.txt
+
+#maybe just remove these?? and see?
+
+#39 genes have potential paralogs
+#maybe I will just exclude those from the phylogenetic analysis for now?
+
+#align exons without deleting paralogs or anything and then go from there
+
+nano mafft.sh
+
+for f in *FNA;
+do (echo $f >> genenames.txt); done
+
+bash mafft.sh
+
+mkdir aligned
+
+screen
+
+parallel --eta "mafft --localpair --maxiterate 1000 --adjustdirectionaccurately {} > aligned/{}.fasta" :::: genenames.txt
+
+screen -r 
+
+
+#stats with AMAS 
+#pre BMGE
+
+#find and remove genes with no info
+find -size 0 -print0 > genes_removed.txt
+#output moved to NGS stats folder on local
+find -size 0 -print0 | xargs -0 rm
+
+
+~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py summary -f fasta -d dna -i *.fasta -c 2
+
+
+
+#need to remove taxa 49-56 and the _R_ verison as well. 
+
+#removed 'duplicate' taxa with R
+
+
+#BMGE 
+nano BMGE.sh
+
+for f in *.fasta;
+do java -jar ~/Ottenlips_phylogenetics/software/BMGE-1.12/BMGE.jar -i ${f} -t DNA -of bmge/${f} >> log_bmge.txt;
+done
+
+bash BMGE.sh
+
+cd bmge/
+
+find -size 0 -print0 > genes_removed_by_BMGE.txt
+
+find -size 0 -print0 | xargs -0 rm
+
+
+#rename to clean up
+rename "s/.FNA.fasta.remove.fasta/.fasta/g" *
+
+
+#Move all fasta files to Gene_trees/input_fasta
+
+
+#see gene_picker.R for gene selection
+
+import data
+gene_stats<-read.csv("~/NGS stats/AMAS_stats_post_BMGE.txt", sep = "")
+
+genes_w_paralogs<-readLines("NGS stats/genesWparalogs_fasta.txt")
+
+#at least 75% of samples present
+
+gene1<-subset(gene_stats, gene_stats$No_of_taxa>=37)
+
+#less than 10% missing data
+
+gene2<-subset(gene1, gene1$Missing_percent<=10)
+
+
+#alignment length greater than 200
+gene3<-subset(gene2, gene2$Alignment_length>=200)
+
+
+# remove genes that have paralog warnings
+gene4<-gene3[! gene3$Alignment_name %in% genes_w_paralogs,]
+
+
+#remove genes that are over 15% variable
+
+gene5<-subset(gene4, gene4$Proportion_variable_sites<=.15)
+
+#average missing data, but doesnt include those missing complete sequences
+
+#return taxa without full sequences
+
+#what is their alignment legnth?
+
+#add it together???
+
+#weight for missing %???
+
+mean(gene5$Missing_percent)
+#2.6%; not quite right.
+
+#probably easier to use AMAS concat feature.
+
+#export list
+Final_gene_list <-gene5$Alignment_name
+
+write.csv(Final_gene_list, "~/NGS stats/GENES_TO_ANALYZE.csv")
+
+
+
+#remove _R_
+sed -i 's/>_R_/>/g' *.fasta
+
+
+#copy genes to analyze 
+
+
+
+#CONCAT ML TREE
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py concat -f fasta -d dna -i *.fasta
+
+
+sed -f masterlist.txt <concatenated.out  >ML_concat_input.fasta
+
+#make tree on CIPRES
+
+
+#RESULTS ARE ON CIPRES AND IN NGS FOLDER ON LOCAL
+#SUMMARY: VERY LITTLE RESOLUTION AND WHAT CLADES ARE WELL SUPPORTED DOESNT MAKE A LOT OF SENSE
+#ML2
+#One part of the alignment in the middle was a little funky. 
+#maybe try with trimal instead of bmge
+#have I ever made a tree with the files from bwa and not from blast? how do they compare
+
+
+
+#MAYBE TRY WITHOUT OUTGROUP SPECIFIED?
+  #doesnt change anything
+
+#INTRONS
+screen -r
+ls
+
+cd introns
+
+#align introns with mafft.
+
+
+nano gene_names.sh
+
+for f in *.fasta;
+do (echo $f >> genenames.txt); done
+
+
+bash gene_names.sh
+
+#deleted Angisperms... from genenames.txt
+
+mkdir aligned
+
+parallel --eta "mafft --localpair --maxiterate 1000 --adjustdirectionaccurately {} > aligned/{}.fasta" :::: genenames.txt
+
+crtl+a+d #exits screen. 
+
+#CHLORPLAST REGIONS
+
+#Downloaded foe_vul cp genome from genbak Acession # GenBank: KR011054.1
+
+#from perry thesis: https://www.ideals.illinois.edu/bitstream/handle/2142/78479/PEERY-DISSERTATION-2015.pdf?sequence=1
+
+mkdir plastome
+
+#copied foe_vul...fasta from local
+
+#get trimmed reads into plastome folder
+cp old_trim/blast/*Tpaired.fastq plastome/
+
+#run hyb-piper
+
+# ...../cp namelist.txt plastome/
+
+nano hyb_plast_ass.sh
+
+
+
+while read name
+do /home/bioinformatics/Ottenlips_phylogenetics/software/HybPiper/reads_first.py -b foe_vul_cp_genome.fasta -r "$name"_$
+done <namelist.txt
+
+#tried with flag --no-exonerate. it assembled everything, but there was no good/clean output. maybe it wont get stuck this time??
+
+#or have to figure out how to retrive the sequences from spades output.
+
+#or possible use a better assembly method.
+
+#maybe mitobim reference was in wrong format
+
+#maybe try with a more cloesley relaeted cp region 
+
+bash hyb_plast_ass.sh
+
+python ~/Ottenlips_phylogenetics/software/HybPiper/retrieve_sequences.py foe_vul_cp_genome.fasta . dna
+
+
+
+
+#CP not working for now. need to figure out how to extract sequences/scaffolds from spades w/o exonerate. maybe ask sven
+
+
+#back to introns
+
+pwd/home/bioinformatics/Ottenlips_new_analysis/introns/aligned/post_bmge
+
+#remove duplicate samples with remove_dupes.R
+
+#stats
+
+
+#rename to clean up
+rename "s/.FNA.fasta.remove.fasta/.fasta/g" *
+
+rename "s/bmge_//g" *
+
+
+nano rename_seq.sh
+
+for f in *.fasta;
+do (sed -r 's/L.*//') < "$f" > ${f}.rename;
+done
+
+bash rename_seq.sh
+
+#I will need to revise masterlist.txt for these because they no longer contain the L..
+
+
+rename "s/.rename//g" *
+
+
+
+
+~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py summary -f fasta -d dna -i *.fasta -c 2
+
+#prepare inputs for gene_picker.R
+
+sed 's/p/_introns.fasta/' genesWparalogs.txt >> genesWparalogs2.txt 
+
+
+Gene_Picker.R
+
+output is GENES_TO_ANALYZE.txt
+
+xargs -a GENES_TO_ANALYZE.txt cp -t analysis/
+
+cd analysis
+
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py concat -f fasta -d dna -i *.fasta
+
+
+# re align??
+
+#remove dupes didnt worK!
+
+#ohwell this is probably a good test to see if they match up
+
+#downloaded MEGA X
+
+#import alignment to mega
+
+#muscle align??
+
+#what if I try introns that only have 100% of genes/data
+
+#first I need to make sure that I remove dupes. with R
+
+#cleaned up names
+
+
+
+mkdir FINAL
+
+xargs -a GENES_TO_ANALYZE.txt cp -t FINAL/
+
+
+#concat with amas 
+
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py concat -f fasta -d dna -i *.fasta
+
+sed -f masterlist_Introns.txt <concatenated.out  >ML_concat_input_introns.fasta
+
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py summary -f fasta -d dna -i *.fasta -c 20 --by-taxon
+
+
+#all of this is in temp/ !!!! DO NOT DELETE!
+
+
+
+#see updated GENEPICKER.R for parameters. 
+
+#100% of taxa, 
+
+#possible that poportion of allowable variance or missing data was too high?
+
+#maybe remove certain taxa from the analysis?
+
+#concat the whole shebang and see who has the most missing data
+
+#maybe try ASTAL with these introns.
+
+
+#def 
+
+#which script removes the Rs?
+
+
+#found the damn r in 6924 S24 with 
+grep R *> temp.txt
+
+#removed it with the text editior.
+
+#lets make some gene trees for ASTRAL! 
+
+for f in g *aligned.FNA; do echo ${f};
+./raxmlHPC-AVX -f a -x 12345 -p 12345 -# autoMRE -m GTRGAMMA -k -s "$f" -n ${f/.FNA}.tree 1> ${f/.FNA}.stdout 2> ${f/.FNA}.stder;
+done
+
+
+#put trees together into one
+
+cat RAxML_bestTree.* > Allgenes_bestTree.tre
+
+
+java -jar ~/Ottenlips_phylogenetics/software/ASTRAL/Astral/astral.5.6.1.jar -i Allgenes_bestTree.tre -t 4 -o Allgenes_bestTree_out.tre 2> Allgenes_bestTree.log
+
+java -Xmx12000M -jar /home/sidonie/softwares/ASTRAL/Astral/astral.5.5.9.jar -i Allgenes_bestTree.tre -t 4 -o Allgenes_bestTree_out.tre 2> Allgenes_bestTree.log
+
+
+#no idea how to intpert the three support values given by astral
+
+#let's try SVDquartetrs in paup
+
+#download PAUP binaries from the website: http://phylosolutions.com/paup-test/ 
+# verision: Ubuntu 64-bit: paup4a163_ubuntu64.gz
+
+
+gunzip paup4a163_ubuntu64.gz
+chmod a+x paup4a163_ubuntu64.gz
+
+#move paup* to folder you wish to run it from
+
+#convert fasta to nexus with online tool at :
+#probably a linux why to do this need to look up
+
+#open paup
+
+#svd quartets tutorial at http://evomics.org/learning/population-and-speciation-genomics/2018-population-and-speciation-genomics/svdquartets-astral-activity/
+
+./paup4a163_ubuntu64.gz #.nexus -L xx.log
+
+paup> svdquartets ?;
+
+paup> svdq evalq=all bootstrap;
+
+savetrees savebootp=BOTH
+
+
+
+
+
+
+
+#lets open up the parameters a bit more 
+
+#166 introns!
+#75% of samples (36 taxa)
+# less than 25% missing data
+#alignment over 200
+#no paralogs
+#Less than 40% variable
+
+
+
+ xargs -a GENES_TO_ANALYZE_loose.txt cp -t LOOSE_FINAL/
+
+ ls -1 | wc -l
+
+
+#SVD quartets
+
+#conver to nexus
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py convert -d dna -f fasta -i concatenated.out -u nexus
+
+sed -f masterlist_Introns.txt <concatenated.out-out.nex  >loose_introns_svd.nex
+ 
+#some how I am getting weird Rs into my data from reverse compliments. Probably not a really large problem, but oh, well.
+
+
+
+#rename according to master list and perform svdquartets w/ bootstrapping in paup
+
+
+
+
+
+
+
+
+
+
+#SNAQ
+
+#installed julia with sudo apt-install julia
+
+#julia v.06.xx installed in ~Downloads
+
+http://crsl4.github.io/PhyloNetworks.jl/stable/
+
+https://github.com/crsl4/PhyloNetworks.jl/wiki/Introduction
+
+#need to update R so I can install PhyloPlots
+
+
+
+
+
+#BWA AND SAMTOOL CP GENOME ASSELBLY
+
+cd ~/Ottenlips_new_analysis/test_sam_plastome/TEST
+
+
+cp foe_vul_cp_genome.fasta TEST/
+
+
+bwa index -a bwtsw foe_vul_cp_genome.fasta
+
+
+
+bwa mem -t 20 foe_vul_cp_genome.fasta S1_S1_L001_R1_001_Tpaired.fastq S1_S1_L001_R2_001_Tpaired.fastq | samtools view -buS - | samtools sort - -o foe_vul_map_pe.sorted.bam
+
+
+ samtools index foe_vul_map_pe.sorted.bam
+
+
+ samtools view -F 0x904 -c foe_vul_map_pe.sorted.bam
+
+
+#10,529 reads map back to cp genome 
+
+
+
+
+#foe_vul_map_pe.sorted.bam is my input file??
+
+
+
+
+./MITObim.pl -start 6 - end 100 -quick foe_vul_cp_genome.fasta -sample s50 -ref ful_vul -readpool S50_S50_L001_R1_001_Tpaired.fastq -mirapath /home/bioinformatics/Downloads/mira_4.0.2_linux-gnu_x86_64_static/bin
+
+
+
+./MITObim.pl -start 7 - end 100 -quick foe_vul_cp_genome.fasta -sample s51 -ref ful_vul -readpool S51_S51_L001_R1_001_Tpaired.fastq -mirapath /home/bioinformatics/Downloads/mira_4.0.2_linux-gnu_x86_64_static/bin
+
+
+
+# FINAL MIOTBIM TEST
+ ./interleave-fastqgz-MITOBIM.py FINAL_TEST/S1_S1_L001_R1_001_Tpaired.fastq FINAL_TEST/S1_S1_L001_R2_001_Tpaired.fastq > S1_paried_test.fastq
+ 
+ ./MITObim.pl -start 1 - end 100 -quick foe_vul_cp_genome.fasta -sample s1 -ref ful_vul -readpool FINAL_TEST/S1_paried_test.fastq -mirapath /home/bioinformatics/Downloads/mira_4.0.2_linux-gnu_x86_64_static/bin
+
+#have to remove > and ; from input fasta
+
+./MITObim.pl -start 1 - end 100 -quick foe_vul_cp_genome.fasta -sample s1 -ref ful_vul -clean -paired yes -readpool FINAL_TEST/S1_paried_test.fastq -mirapath /home/bioinformatics/Downloads/mira_4.0.2_linux-gnu_x86_64_static/bin 
+
+#paired; clean
+
+#why stopping after 1 iteration??
+
+#probaly need to log out put? >.log
+
+
+bash interleafe.sh
+
+#why not stopping 
+
+
+for f in *.fastq;
+do ./MITObim.pl -start 1 - end 100 -quick foe_vul_cp_genome.fasta -sample {$f}_cp -ref {$f}_ful_vul_ref -clean -paired yes -readpool ${f} -mirapath /home/bioinformatics/Downloads/mira_4.0.2_linux-gnu_x86_64_static/bin;
+done
+
+
+
+10/22 pciking files for SNAQ
+
+reaname all taxa with rename.sh
+
+remove everything but the 20 or so interested taxa 
+
+# covert to nex
+python ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py convert -d dna -f fasta -i *.fasta -u nexus
+
+#creatte tarball of nexus files
+tar -zcvf nexhyb_B1.tar.gz *.nex
+
+
+TICR pipelne
+./TICR/scripts/mb.pl nexhyb_B1.tar.gz -m bayes_block.txt -o mb-output
+
+mkdir test_out
+
+tar -xvf mb-output/nexhyb_B1.mb.tar -C test_out/
+
