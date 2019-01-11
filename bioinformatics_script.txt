@@ -1,0 +1,670 @@
+#Downloaded all required progams (see README.txt in /software/)
+#Downloaded data (see README.txt in /raw_data/)
+
+######################
+###RUN FASTQC#########
+######################
+
+#write for loop with nano
+bash fast_qc.sh
+
+#lots have overrepresented sequences that consist of primers and adapaters and barcodes
+#is this a big problem? did primers get amplfied?
+
+
+#####################
+###TRIMMING##########
+#####################
+mkdir trim
+#trim illumnia adapters and based on quality
+#do a trial trim?
+ java -jar ~/Ottenlips_phylogenetics/software/Trimmomatic-0.36/trimmomatic-0.36.jar PE -phred33 S1_S1_L001_R1_001.fastq S1_S1_L001_R2_001.fastq output_test_trim_S1_R1.fastq output_test_trim_S1_R2.fastq ILLUMINACLIP:TruSeq3-PE.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36
+#from bioinformatics class lab_script.txt
+#trimmed 'succesfully'
+#check
+fastqc output_test_trim_S1_R1.fastq output_test_trim_S1_R2.fastq
+firefox S1_S1_L001_R1_001_fastqc.html output_test_trim_S1_R1_fastqc.html S1_S1_L001_R2_001_fastqc.html output_test_trim_S1_R2_fastqc.html
+
+#trimmomatic removed the PCR primer, but not the TruSeq Adapter.
+
+#let's try bruce's trimmomatic command
+#100% removed with Bruce's command
+java -jar ~/Ottenlips_phylogenetics/software/Trimmomatic-0.36/trimmomatic-0.36.jar PE -phred33 S1_S1_L001_R1_001.fastq S1_S1_L001_R2_001.fastq outputBRUCE_test_trim_S1_R1.fastq outputBRUCE_test_trim_S1_R2.fastq ILLUMINACLIP:TruSeq3-PE-2.fa:2:30:7:2:true MAXINFO:40:0.7 CROP:290 MINLEN:36
+
+#let's try Sidonie
+#ca. 70% removed
+java -jar ~/Ottenlips_phylogenetics/software/Trimmomatic-0.36/trimmomatic-0.36.jar PE -phred33 S1_S1_L001_R1_001.fastq S1_S1_L001_R2_001.fastq output_Sidonie_test_trim_S1_R1.fastq output_Sidonie_test_trim_S1_R2.fastq ILLUMINACLIP:TruSeq3-PE-simpleclip.fa:1:30:6 LEADING:30 TRAILING:30 SLIDINGWINDOW:4:30 MINLEN:36
+
+#more consistent trimming/removal than SVEN's command
+#I dont think this trimming is removig adapters properly
+
+# it had not been finding seqences correctly!
+#let's try downloading trimmomatic into the trim folder and using default/recomended settings
+
+java -jar trimmomatic-0.36.jar PE -phred33 S1_S1_L001_R1_001.fastq S1_S1_L001_R2_001.fastq output_forward_paired.fq.gz output_forward_unpaired.fq.gz output_reverse_paired.fq.gz output_reverse_unpaired.fq.gz ILLUMINACLIP:adapters/TruSeq3-PE-2.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36
+# all in test/
+#so now I need to make that a loop
+
+#copy all *fastq files to trimmomatic folder
+#write trim.sh lab_script
+bash trim.sh
+
+#paired trimmed files look good, but unpaired still have lots of overrepesented sequences, whats the deal?
+
+#######################
+###HYB-PIPER###########
+#######################
+
+#remove junk
+rm Undetermined*
+
+#create list of names
+#write script # for f in *_R1_001_Tpaired.fastq; do (echo ${f/_R1_001_Tpaired.fastq} >> namelist.txt); done
+bash create_list.sh
+#check output
+less namelist.txt
+
+#create hyb-piper script (bwa verison)                                                                                                      
+
+while read name 
+do /home/bioinformatics/Ottenlips_phylogenetics/software/HybPiper/reads_first.py -b targetsProbeAlignmentBaitOnly.fasta -r "$name"_R*Tpaired.fastq --prefix $name --bwa
+done <namelist.txt
+
+bash basic_hyb_piper_bwa.sh                                                                                                             
+
+
+#This was giving me lots of errors about the location of spades. I think what finally fixed it was moving the /share/spades folder (from spades orginal download location) to usr/share/spades
+#It looks like it is working, but I just got an error that says the Spades has 'crashed', *but its still running?
+
+#This ran overnight and was succesful! (I think!) 
+
+#This makes one folder per sample
+
+#Now we want one folder per gene
+#This python script creates 1 folder/gene
+python ~/Ottenlips_phylogenetics/software/HybPiper/retrieve_sequences.py targetsProbeAlignmentBaitOnly.fasta . dna
+mv *.FNA to Gene_files/
+
+#shit did I overwrite my files?? when I moved just the .FNA to gene folders?
+
+python ~/Ottenlips_phylogenetics/software/HybPiper/retrieve_sequences.py Angiosperms353_targetSequences.fasta . dna
+
+
+#introns only
+#write script
+
+while read name
+do python /home/bioinformatics/Ottenlips_phylogenetics/software/HybPiper/intronerate.py --prefix $name
+done < namelist.txt
+
+
+bash intron_hyb_piper.sh
+
+$retrive intron sequences and then move to new folder
+python ~/Ottenlips_phylogenetics/software/HybPiper/retrieve_sequences.py targetsProbeAlignmentBaitOnly.fasta . intron
+
+mkdir Introns_only
+mv trimmed/*intron.fasta Introns_only
+
+###################
+#CHECK FOR PARALOGS#
+#####################
+#from trimmed dir
+#write script
+
+while read i
+do
+echo $i
+python ~/Ottenlips_phylogenetics/software/HybPiper/paralog_investigator.py $i
+done < namelist.txt
+
+bash paralogs.sh
+
+
+#output for paralogs is in ../trimmed/paralog_output.txt
+
+
+
+#Check hybridization sucess rates##
+
+#calculate seq legnths got to have the orignal files! 
+#from /trimmed
+python ~/Ottenlips_phylogenetics/software/HybPiper/get_seq_lengths.py targetsProbeAlignmentBaitOnly.fasta namelist.txt dna > out_seq_lengths.txt
+
+#visualize in R
+#move out_seq_lengths.txt to Hyb-Piper folder
+#modify  .R script to have proper file name
+# install two packes gplot and heatmap.plus
+Rscript gene_recovery_heatmap.R out_seq_lengths.txt out_seq_lengths.txt 
+#output is Rplot.pdf
+#I moved to output folder
+
+#hyb-piper stats
+#from trimmed folder #got to have the orignal files! 
+python ~/Ottenlips_phylogenetics/software/HybPiper/hybpiper_stats.py out_seq_lengths.txt namelist.txt > out_stats.txt
+#copy to output and view in libre office
+#very consitent 13-14% on targert reads. not bad? 
+
+#26 is the one with the most data. 
+
+###ALIGN WITH MAFT##
+
+#Align by gene
+cd Gene_files/
+#write scipt to make text file
+#for f in *.FNA; do (echo $f >> genenames.txt); done
+bash #genenames.sh
+mkdir aligned 
+parallel --eta "mafft --localpair --maxiterate 1000 {} > {}.aligned.FNA" :::: genenames.txt
+mv *aligned.FNA aligned/
+
+#reapeat above step on introns_only
+
+#supposed to change the sequences names so they don't contain the gename names? did they ever??
+
+########
+##TRIMAL##
+########
+#remove spurious bases/alignements
+#parameters are recomended from trimal publication
+
+./trimal -in g7628_test.fasta -out test_g7628_trim.fasta -cons 60 -gt .9
+
+
+#above command did a pretty good job, but required input files to be a fasta. convereted with mv command. also trimal in same folder
+
+#rename each one to fasta
+rename "s/aligned.FNA/aligned.fasta/g" *
+
+#script to trim all of them.
+for f in *.FNA.aligned.fasta;
+do ./trimal -in ${f} -out ${f}.trim.fasta -cons 60 -gt .9;
+done
+
+
+#run mafft again?
+#  I DIDNT
+
+#remove taxa with 80% missing data
+python sequence_cleaner.py test_g7628_trim.fasta 0 80
+
+#must make script in nano 
+#http://biopython.org/wiki/Sequence_Cleaner
+import sys
+from Bio import SeqIO
+
+def sequence_cleaner(fasta_file, min_length=0, por_n=100):
+    # Create our hash table to add the sequences
+    sequences={}
+
+    # Using the Biopython fasta parse we can read our fasta input
+    for seq_record in SeqIO.parse(fasta_file, "fasta"):
+        # Take the current sequence
+        sequence = str(seq_record.seq).upper()
+        # Check if the current sequence is according to the user parameters
+        if (len(sequence) >= min_length and
+            (float(sequence.count("N"))/float(len(sequence)))*100 <= por_n):
+        # If the sequence passed in the test "is it clean?" and it isn't in the
+        # hash table, the sequence and its id are going to be in the hash
+            if sequence not in sequences:
+                sequences[sequence] = seq_record.id
+       # If it is already in the hash table, we're just gonna concatenate the ID
+       # of the current sequence to another one that is already in the hash table
+            else:
+                sequences[sequence] += "_" + seq_record.id
+
+
+    # Write the clean sequences
+
+    # Create a file in the same directory where you ran this script
+    with open("clear_" + fasta_file, "w+") as output_file:
+        # Just read the hash table and write on the file as a fasta format
+        for sequence in sequences:
+            output_file.write(">" + sequences[sequence] + "\n" + sequence + "\n")
+
+    print("CLEAN!!!\nPlease check clear_" + fasta_file)
+
+
+userParameters = sys.argv[1:]
+
+try:
+    if len(userParameters) == 1:
+        sequence_cleaner(userParameters[0])
+    elif len(userParameters) == 2:
+        sequence_cleaner(userParameters[0], float(userParameters[1]))
+    elif len(userParameters) == 3:
+        sequence_cleaner(userParameters[0], float(userParameters[1]),
+                         float(userParameters[2]))
+    else:
+        print("There is a problem!")
+except:
+    print("There is a problem!")
+
+
+
+#do it for all of them with a for loop
+
+
+
+
+#####################
+###RAXML on GENES####
+#####################
+
+#cant tell if the script is working
+#maybe just no output as it runs? leave it for awhile? 
+
+#write script
+for f in g *aligned.FNA; do echo ${f};
+./raxmlHPC-AVX -f a -x 12345 -p 12345 -# autoMRE -m GTRGAMMA -k -s "$f" -n ${f/.FNA}.tree 1> ${f/.FNA}.stdout 2> ${f/.FNA}.stder;
+done
+
+bash raxml_genes.sh
+
+#make gene trees one file
+
+cat *tree > alltree.tree
+
+#stopped gene tree anaylsis on non trimmed data
+
+###########
+##ASTRAL###
+###########
+x
+# changed name and moved alltree.tree
+
+# output/astral
+java -jar ~/Ottenlips_phylogenetics/software/ASTRAL/Astral/astral.5.6.1.jar -i trim_spur_remove_gene_trees_astral_input.tree
+
+
+###########
+##RESULTS###
+##########
+
+#raxml on the trim and clean genes was much faster. 1 day vs still running 2 days later.
+
+
+###NEW RUN### ##
+##without dupes#
+#i delted old stud=ff
+############NO DUPLICATES#####################
+#Ran hyb piper on both aa and dna target probes
+#which performs better AA or DNA???
+
+# Better coverage for AA run check see results folder for stats. Havent made a heatmap though
+#only using AA run from here on out
+
+#retrive  introns w/ hyb-piper .py script
+??
+
+#Align
+parallel --eta "mafft --localpair --maxiterate 1000 {} >  {}.aligned.FNA" :::: genenames.txt 
+mv to aligned
+
+#Trim based on column completeness 
+	
+	#rename to fasta
+  rename "s/.FNA.aligned.FNA/.fasta/g" *
+
+	
+	#Trimal
+	#move trimal to the folder containg the .fasta files 
+	
+	 cp ~/Ottenlips_phylogenetics/software/trimal/source/trimal aligned/
+	
+	
+	#BMGE
+	https://research.pasteur.fr/en/software/bmge-block-mapping-and-gathering-with-entropy/
+ 
+#test
+java -jar ~/Ottenlips_phylogenetics/software/BMGE-1.12/BMGE.jar -i g7628.FNA.aligned.FNA  -t DNA -of test.g7628.FNA
+
+#good output. How to write that to log? 
+
+#real
+nano BMGE.sh
+for f in *.FNA;
+do java -jar ~/Ottenlips_phylogenetics/software/BMGE-1.12/BMGE.jar -i ${f} -t DNA -of bmge_${f} >> log_bmge.txt;
+done
+bash BMGE.sh
+
+ 
+
+#re_align
+rm genenames.txt
+bash mane_name.sh
+less genenames.txt
+parallel --eta "mafft --localpair --maxiterate 1000 {} > {}.realign.FNA" :::: genenames.txt
+
+#make gene trees with raxml
+
+#ucK! it times out with like 30 to go! dont use ssh for large jobs! 
+
+#Trying astral anyways just to double check
+#with 30 gb of ram
+
+java -Xmx30000M -jar ~/Ottenlips_phylogenetics/software/ASTRAL/
+Astral/astral.5.6.1.jar -i alltree.tree 
+
+#what the fuck does astral want as input! 
+
+#I think it might just want bootstrap trees
+cat RAxML_bootstrap*.tree > all_tree_boot_strap.tree
+
+
+#or just the best tree?
+#maybe collapse values under 10%?
+
+#or bipartions tree? (seems to be recomended by hyb phylo maker)
+YES ACCORDING TO SVEN IT IS THE RAXML BIPARTIONS TREE WHICH INCLUDEDS BOOTSTRAP SUPPORT IN ADDITION TO BRANCH LENGHTS
+
+MUST SET OUTGROUP IN ML 
+-o S31_S31_L001 (JFS 13046 HM!)
+
+#DOING ML TREES FOR A SUBSET OF 9 gene trees
+#according to first 9 when sorted by all taxa in svens R command
+
+bmge_g4471
+bmge_g4527
+bmge_g4724
+bmge_g4793
+bmge_g4802
+bmge_g4848
+bmge_g4890
+bmge_g4992
+bmge_g5018
+
+
+cat RAxML_bipartitions* > astral_input_test_9_genes.tree
+
+cp to astral_input
+
+
+java -jar ~/Ottenlips_phylogenetics/software/ASTRAL/Astral/astr
+al.5.6.1.jar -i astral_input_test_9_genes.tree -o astral_output_test_9_genes.tree 2>astral_test_9_genes.log
+
+#renamed taxa to proper names with sed command
+
+#further stats with  AMAS
+#downloaded it into /Ottenlips_phylogenetics/software/AMAS/amas
+
+#AMAS doesnt like zeros, me neither!
+# find with 0 bytes 
+find -size 0 -print0
+#find and remove with zero bytes 
+find -size 0 -print0 | xargs -0 rm
+#removed genes 6685, 6404, 5528, 6552, 5404, 
+#these were removed by bmge
+
+#get stats
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py summary -f fasta -d dna -i *.FNA -c 20 --by-taxon
+#failed "too many open windows"
+#try with -c 30
+# did it without --by-taxon and worked finded
+#output is summary.txt
+
+
+#find and remove long braches. 
+#wd = Ottenlips_phylogenetics/output/Gene_files/aa/gene_trees/raxml_input/all_genes/delete_zero/temp_ml_output/fasttree
+#tutorial at https://github.com/mossmatters/KewHybSeqWorkshop/blob/master/Alignment.md
+#create list of genes to run on fasttree
+nano gene_list.txt
+
+for f in *.tree;
+do python outlier.py ${f} --outgroups outgroup.txt;
+done
+
+#execute for loop
+
+
+
+
+
+#now = aa/long_branch_detect
+#moved all trees to this file
+
+
+5/12/18
+#extract introns and create SUPERCONTIGS (introns+exons concatatanated)
+cd ~/Ottenlips_phylogentics/output/no_duplicates
+nano introns.sh
+
+while read name
+do python /home/bioinformatics/Ottenlips_phylogenetics/software/HybPiper/intronerate.py --prefix $name
+done < namelist.txt
+
+bash introns.sh
+
+python ~/Ottenlips_phylogenetics/software/HybPiper/retrieve_sequences.py targetsProbeAlignmentBaitOnly.fasta . supercontig
+
+mv *supercontig.fasta ~/Ottenlips_phylogenetics/output/Gene_files/introns/
+
+cd  ~/Ottenlips_phylogenetics/output/Gene_files/introns/
+
+#align supercontigs with MAFFT; create list of genesnames with gene_names.sh
+
+mkdir align
+parallel --eta "mafft --localpair --maxiterate 1000 {} > align/{}" :::: genenames.txt 
+
+#trim with bmge
+mkdir bmge
+nano align/BMGE.sh
+for f in *.fasta;
+do java -jar ~/Ottenlips_phylogenetics/software/BMGE-1.12/BMGE.jar -i ${f} -t DNA -of bmge_${f} >> log_bmge.txt;
+done
+bash BMGE.sh
+mv bmge* bmge/
+#its possible that BMGE removes all the damn outliers I was trying to keep!
+#maybe trimal or that one recomended by fast tree
+
+
+#realign with mafft
+mkdir remove_outlier
+parallel --eta "mafft --localpair --maxiterate 1000 {} > ../remove_outlier/{}" :::: genenames.txt 
+#output is in remove outlier ya dummy! 
+$moved everything else to back_up
+
+
+
+#generate ml trees for outlier detection
+#make a txt document w/ gene names; 
+cp ~/Ottenlips_phylogentics/software/FastTree #to current wd
+
+parallel "./FastTree -gtr {} > {}.tre" :::: genenames.txt
+
+mv *.tre fast_tree_output/
+
+#use modifed R scripts to find and remove long branches
+#see R code for phylo folder remove_bad_taxa_from_trees_working.R
+#WOOHOO GOT RID OF MY FUCKING LONG BRANCHES CAUSED BY ALL OF THOSE DAMN MISALIGNMENTS/MISASSIGNMENTS! 
+
+
+#realign??
+
+#?then remove taxa with too much missing data  (80%?) 
+
+
+5/18
+
+#realigned with mafft into "..."
+
+#todo:
+
+#rename sequences in genes so they can be used in ASTRAL
+#for g in g*.fasta; do (sed -r 's|(>.*S[0-9]{2}.*)-g[0-9]{4}|\1|g') < "$g" > ${g/.fasta}_aligned.fas; done
+#ugh cant get to work. do i need this for amas??
+
+#conat to make tree-
+
+rename with rename_sequences.sh script
+UGH! THE ONES WITH ONLY ONE NUMBER DONT CHANGE!
+
+
+for f in *.fasta;
+do (sed -r 's|(>.*S[0-9]{2}.*)-g[0-9]{4}|\1|g') < "$f" > ${f}.rename;
+done
+
+then again with change 2 to 1
+
+#change all file names
+#preview with -n
+rename  's/\.fasta.remove.fasta.rename.concat.fasta.rename$/.concat.fasta/' *.rename
+
+concat with amas 
+
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py concat -f fasta -d dna -i *.fasta
+
+./raxmlHPC-AVX -f a -x 12345 -p 12345 -# autoMRE -m GTRGAMMA -k -s concatenated.out -n concat.tree
+
+#DOING RAXML ON CIPRES BECAUSE IT IS TIMING OUT OVER MOBA
+
+#1st run had 100 bs and very low support values.
+
+#tring again with auto MRE
+
+#I used amas to get stats and put them in a folder called results. Why is the AT content so high?! Is this an issue? Was it showing up early on in FASTQC?
+
+
+
+
+
+
+5/21
+
+test with 21 genes that have all 48  taxa worked pretty well
+
+now trying with less than 15% missing data sequences over 500 basepairs and at least 38 taxa 
+
+xargs -a file_list.txt mv -t /path/to/dest
+
+xargs -a big_gene_list.txt cp -t big_genes/
+
+#concate and summarize with amas
+
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py concat -f fasta -d dna -i *.fasta
+
+
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py summary -f fasta -d dna -i concatenated.out -c 20
+
+
+
+###FIND AND REPLACE TO RENAME TAXA. VERY IMPORTANT.
+#create masterlst.txt with following format
+s/old/new/g
+s/old/new/g
+#might need signal quotes around 's/old/new/g' 
+#execute with the following command 
+sed --file=masterlist.txt <old list > newlist.txt
+
+
+
+
+
+
+
+
+
+6/3
+
+# still getting really low bs support values so I will try and extract snps with snp-sites (installed w/ sudo apt-get) 
+#https://github.com/sanger-pathogens/snp-sites
+
+cd ~/Ottenlips_phylogentics/SNPs
+
+#use that same cleaned big file? yes.
+#source is the same as the big_genes ML analysis 
+#at least 38 taxa less than 15%muissing data and sequences over 500 basepairs 
+
+snp-sites -o SNPs_6_3.fasta concatenated.out
+# created a fasta output, I need vcf for snprelate
+
+snp-sites -v -o SNPs_6_3.vcf concatenated.out
+
+#SNPRelate in R studio PCA.R
+
+SNPs_6_3 with no file extension is the GDS file for SNPreleate
+
+
+
+The file name: /home/bioinformatics/Ottenlips_phylogenetics/SNPs/SNPs_6_3 
+The total number of samples: 48 
+The total number of SNPs: 38754 
+SNP genotypes are stored in SNP-major mode (Sample X SNP).
+
+
+
+
+
+
+6/24
+#A possible problem is that BMGE is causing me to lose too much resolution in my data. I should try to use trimal instead.
+#WD: ~/Ottenlips_phylogenetics/output/Gene_files/introns/trimal
+
+#create gene names text file
+for f in g*.fasta; do (echo $f >> genenames.txt); done
+
+#align 
+mkdir aligned
+parallel --eta "mafft --localpair --maxiterate 1000 {} > aligned/{}" :::: genenames.txt
+
+
+#get stats
+find -size 0 -print0 | xargs -0 rm
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py summary -f fasta -d dna -i *.fasta -c 20
+
+#trim
+cp ~/Ottenlips_phylogenetics/software/trimal/source/trimal ~/Ottenlips_phylogenetics/output/Gene_files/introns/trimal/aligned/trimal/
+
+for f in *.fasta;
+do ./trimal -in ${f} -out ${f} -cons 60 -gt .9;
+done
+
+
+
+#get stats
+python3 ~/Ottenlips_phylogenetics/software/AMAS/amas/AMAS.py summary -f fasta -d dna -i *.fasta -c 20
+
+
+#pick out genes that have all taxa; under 50%missing data under 50%variable sites
+
+#move them to a folder
+xargs -a final_gene_list.txt cp -t gene_subset/
+
+
+
+7/7
+
+hand curated the BMGE test 21. removed 14. 
+KEPT:
+4848
+5271
+5639
+6462
+6051
+6004
+FIXABLE:
+6050
+6295
+6875
+7324
+
+Made trees in raxml on cipres for 7 genes.
+
+
+_______________
+
+84 genes selected from final 
+
+
+
+#JUNK BELOW THIS LINE
+#############################################
+
+rename to taxa with 
+xargs -a masterlist.txt -n 2 mv
+#master list is formated in nano as
+# oldfile newfiles
+
+
+
+######
